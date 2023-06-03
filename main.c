@@ -6,8 +6,8 @@
 #include <unistd.h>
 
 #define MAX 100// Número máximo de impressoras
-#define NUM_SETORES 16// Número de setores
-#define MAX_IMPRESSOES_SETOR 2 // Número máximo de impressões por setor
+#define NUM_SETORES 5// Número de setores
+#define MAX_IMPRESSOES_SETOR 4 // Número máximo de impressões por setor
 
 typedef struct {
     int tipo; // Tipo da impressora (T1 ou T2)
@@ -49,24 +49,26 @@ void* imprimir(void* arg) {
             }
         }
 
-        if (setor_id != -1) {
-            printf("Impressora #%d está imprimindo solicitação #%d do setor %d.\n", id_impressora, setores[setor_id].num_impressoes_realizadas, setores[setor_id].id);
-
-            esperar();
-
+        if (id_impressora != -1 && setores[setor_id].num_solicitacoes < MAX_IMPRESSOES_SETOR) {
+            printf("Setor %d está realizando solicitação de impressão #%d.\n", setores[setor_id].id, setores[setor_id].num_solicitacoes);
             if (impressora->tipo == 1 && rand() % 100 < 15) { // T1 com 15% de chance de falha
                 printf("Impressão falhou para a solicitação #%d do setor %d. Reenviando solicitação...\n", setores[setor_id].num_impressoes_realizadas, setores[setor_id].id);
                 impressora->num_impressoes_falha++;
-            } else {
-                printf("Impressão concluída para a solicitação #%d do setor %d.\n", setores[setor_id].num_impressoes_realizadas, setores[setor_id].id);
-                impressora->num_impressoes_sucesso++;
-                setores[setor_id].num_impressoes_realizadas++;
+             } else {
+                if (setores[setor_id].num_impressoes_realizadas < MAX_IMPRESSOES_SETOR) {
+                    sem_post(&impressoras[id_impressora].sem_impressora);
+                    setores[setor_id].num_solicitacoes++;
+                    setores[setor_id].num_impressoes_realizadas++;
+                    impressora->num_impressoes_sucesso++;
+                    esperar();
+                    printf("Solicitação #%d do Setor %d impressa com sucesso pela Impressora #%d (Tipo: %d).\n", setores[setor_id].num_solicitacoes, setores[setor_id].id, id_impressora, impressora->tipo);
+                } 
             }
-
-            if (setores[setor_id].num_impressoes_realizadas == setores[setor_id].num_solicitacoes) {
-                sem_post(&setores[setor_id].sem_setor);
-                break;
-            }
+             sem_post(&impressora->sem_impressora);
+            if (setores[setor_id].num_impressoes_realizadas == MAX_IMPRESSOES_SETOR) {
+                        sem_post(&setores[setor_id].sem_setor);
+                        break;
+                    }
 
             sem_post(&setores[setor_id].sem_setor);
         } else {
@@ -84,7 +86,7 @@ void* imprimir(void* arg) {
 void* enviar_solicitacao(void* arg) {
     int setor_id = *(int*)arg;
     int max = 0;
-   // printf("Setor ID: %d", setor_id);
+   printf("Setor ID: %d", setor_id);
     Setor* setor = &setores[setor_id];
     for (int i = 0; i <  MAX; i++) {
         if (impressoras->tipo != 1 && impressoras->tipo != 2) {
@@ -101,8 +103,8 @@ void* enviar_solicitacao(void* arg) {
         int sem_value_i;
         int sem_value_j;
         for (int j = 0; j < max; j++) {
-            sem_getvalue(&impressoras[j].sem_impressora, &sem_value_i);
-            if (impressoras[j].tipo == 1 && sem_value_i == 0) {
+            //sem_getvalue(&impressoras[j].sem_impressora, &sem_value_i);
+            if (sem_trywait(&impressoras[j].sem_impressora) == 0 && impressoras[j].tipo == 1)  {
                 impressora_id = j;
                 tipo_impressora = 1;
                 break;
@@ -110,9 +112,8 @@ void* enviar_solicitacao(void* arg) {
         }
 
         if (impressora_id == -1) {
-            for (int j = 0; j < max; j++) {
-                sem_getvalue(&impressoras[j].sem_impressora, &sem_value_j);
-                if (impressoras[j].tipo == 2 && sem_value_j == 0) {
+            for (int j = 0; j < MAX; j++) {
+                if (sem_trywait(&impressoras[j].sem_impressora) == 0 && impressoras[j].tipo == 2) {
                     impressora_id = j;
                     tipo_impressora = 2;
                     break;
@@ -120,25 +121,7 @@ void* enviar_solicitacao(void* arg) {
             }
         }
 
-        if (impressora_id != -1 && setores[i].num_solicitacoes < MAX_IMPRESSOES_SETOR) {
-            //printf("Setor %d está realizando solicitação de impressão #%d.\n", setor->id, i);
-            //esperar();
-            setores[i].num_solicitacoes++;
-            if (tipo_impressora == 1) {
-                sem_post(&impressoras[impressora_id].sem_impressora);
-                setor->num_impressoes_realizadas++;
-                printf("Solicitação #%d do Setor %d impressa com sucesso pela Impressora #%d (Tipo: T1).\n", setor->num_solicitacoes, setor->id, impressora_id);
-            } else if (tipo_impressora == 2) {
-                if (setor->num_impressoes_realizadas < MAX_IMPRESSOES_SETOR) {
-                    sem_post(&impressoras[impressora_id].sem_impressora);
-                    setor->num_impressoes_realizadas++;
-                    printf("Solicitação #%d do Setor %d impressa com sucesso pela Impressora #%d (Tipo: T2).\n", i, setor->id, impressora_id);
-                } else {
-                    sem_post(&impressoras[impressora_id].sem_impressora);
-                    printf("Limite máximo de impressões alcançado para o Setor %d. Solicitação de impressão #%d do Setor %d não pode ser atendida pela Impressora #%d (Tipo: %d).\n", setor->id, i, setor->id, impressora_id, impressoras[impressora_id].tipo);
-                }
-            }
-      }
+    
 
         sem_post(&setor->sem_setor);
     }
