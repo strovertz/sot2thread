@@ -42,7 +42,7 @@ void* imprimir(void* arg) {
 
         int setor_id = -1;
 
-        for (int i = 0; i < NUM_SETORES; i++) {
+        for (int i = 1; i <= NUM_SETORES; i++) {
             if (sem_trywait(&setores[i].sem_setor) == 0) {
                 setor_id = i;
                 break;
@@ -63,7 +63,7 @@ void* imprimir(void* arg) {
                 setores[setor_id].num_impressoes_realizadas++;
             }
 
-            if (setores[setor_id].num_impressoes_realizadas >= setores[setor_id].num_solicitacoes) {
+            if (setores[setor_id].num_impressoes_realizadas == setores[setor_id].num_solicitacoes) {
                 sem_post(&setores[setor_id].sem_setor);
                 break;
             }
@@ -87,20 +87,22 @@ void* enviar_solicitacao(void* arg) {
    // printf("Setor ID: %d", setor_id);
     Setor* setor = &setores[setor_id];
     for (int i = 0; i <  MAX; i++) {
-        if (impressoras->tipo != 1 || impressoras->tipo != 2) {
+        if (impressoras->tipo != 1 && impressoras->tipo != 2) {
             max = i;
             break;
         }
     }
 
-    for (int i = 0; i < setor->num_solicitacoes; i++) {
+   for (int i = setor->num_solicitacoes; i > 0; i--) {
         sem_wait(&setor->sem_setor);
 
         int impressora_id = -1;
         int tipo_impressora = -1;
-
+        int sem_value_i;
+        int sem_value_j;
         for (int j = 0; j < max; j++) {
-            if (impressoras[j].tipo == 1 && &impressoras[j].sem_impressora== 0) {
+            sem_getvalue(&impressoras[j].sem_impressora, &sem_value_i);
+            if (impressoras[j].tipo == 1 && sem_value_i == 0) {
                 impressora_id = j;
                 tipo_impressora = 1;
                 break;
@@ -109,7 +111,8 @@ void* enviar_solicitacao(void* arg) {
 
         if (impressora_id == -1) {
             for (int j = 0; j < max; j++) {
-                if (impressoras[j].tipo == 2 && &impressoras[j].sem_impressora == 0) {
+                sem_getvalue(&impressoras[j].sem_impressora, &sem_value_j);
+                if (impressoras[j].tipo == 2 && sem_value_j == 0) {
                     impressora_id = j;
                     tipo_impressora = 2;
                     break;
@@ -117,14 +120,14 @@ void* enviar_solicitacao(void* arg) {
             }
         }
 
-        if (impressora_id != -1 && setores[i].num_solicitacoes > 0) {
-            printf("Setor %d está realizando solicitação de impressão #%d.\n", setor->id, i);
-            esperar();
-
+        if (impressora_id != -1 && setores[i].num_solicitacoes < MAX_IMPRESSOES_SETOR) {
+            //printf("Setor %d está realizando solicitação de impressão #%d.\n", setor->id, i);
+            //esperar();
+            setores[i].num_solicitacoes++;
             if (tipo_impressora == 1) {
                 sem_post(&impressoras[impressora_id].sem_impressora);
                 setor->num_impressoes_realizadas++;
-                printf("Solicitação #%d do Setor %d impressa com sucesso pela Impressora #%d (Tipo: T1).\n", i, setor->id, impressora_id);
+                printf("Solicitação #%d do Setor %d impressa com sucesso pela Impressora #%d (Tipo: T1).\n", setor->num_solicitacoes, setor->id, impressora_id);
             } else if (tipo_impressora == 2) {
                 if (setor->num_impressoes_realizadas < MAX_IMPRESSOES_SETOR) {
                     sem_post(&impressoras[impressora_id].sem_impressora);
@@ -136,10 +139,6 @@ void* enviar_solicitacao(void* arg) {
                 }
             }
       }
-         //else {
-        //     printf("Não há impressoras disponíveis para o setor %d. Aguardando...\n", setor->id);
-        //     i--;
-        // }
 
         sem_post(&setor->sem_setor);
     }
@@ -167,7 +166,7 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < NUM_SETORES; i++) {
         Setor* setor = &setores[i];
         setor->id = i + 1;
-        setor->num_solicitacoes = MAX_IMPRESSOES_SETOR; // Definir a quantidade de solicitações por setor conforme necessário
+        setor->num_solicitacoes = 0; // Definir a quantidade de solicitações por setor conforme necessário
         setor->num_impressoes_realizadas = 0;
         sem_init(&setor->sem_setor, 0, 1);
     }
@@ -181,21 +180,19 @@ int main(int argc, char* argv[]) {
         sem_init(&impressora->sem_impressora, 0, 1);
     }
 
-    // Criação das threads das impressoras
+    // Criação das threads dos setores
+    for (int i = 0; i < NUM_SETORES; i++) {
+        int* id_setor = malloc(sizeof(int));
+        *id_setor = i;
+        //printf("Setor %d Criado", setores[i].id); //cria todos os setores corretamente, o erro deve estar na hora de enviar solicitacao
+        if(pthread_create(&threads_setores[i], NULL, enviar_solicitacao, id_setor)) printf("Pthread create error no setor %d \n", i);
+    }
+   // Criação das threads das impressoras
     for (int i = 0; i < max; i++) {
         int* id_impressora = malloc(sizeof(int));
         *id_impressora = i;
         if(pthread_create(&threads_impressoras[i], NULL, imprimir, id_impressora)) printf("Pthread create error no setor %d \n", i);
     }
-
-    // Criação das threads dos setores
-    for (int i = 0; i < NUM_SETORES; i++) {
-        int* id_setor = malloc(sizeof(int));
-        *id_setor = i;
-        printf("Setor %d Criado", setores[i].id);
-        if(pthread_create(&threads_setores[i], NULL, enviar_solicitacao, id_setor)) printf("Pthread create error no setor %d \n", i);
-    }
-
     // Aguardar finalização das threads das impressoras
     for (int i = 0; i < max; i++) {
         pthread_join(threads_impressoras[i], NULL);
